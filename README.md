@@ -1,14 +1,15 @@
 <br>
 <div align="center">
   <img src="logo.png" alt="RedKit Logo" width="400"/>
+  <br><br>
+  
+  [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org/)
+  [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+  [![Test Status](https://img.shields.io/badge/Tests-Passing-green.svg)](#testing)
+  [![Redis Compatible](https://img.shields.io/badge/Redis-Compatible-red.svg)](https://redis.io/)
 </div>
 
 A Redis-compatible server framework for Go 🐹
-
-[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Test Status](https://img.shields.io/badge/Tests-Passing-green.svg)](#testing)
-[![Redis Compatible](https://img.shields.io/badge/Redis-Compatible-red.svg)](https://redis.io/)
 
 ## 📖 Overview
 
@@ -162,7 +163,7 @@ func main() {
 }
 ```
 
-## 🧪 Testing with Redis CLI
+##  Testing with Redis CLI
 
 Once your server is running, you can test it with any Redis client:
 
@@ -251,7 +252,7 @@ func (h MyHandler) Handle(conn *Connection, cmd *Command) RedisValue {
 server.RegisterCommand("CUSTOM", MyHandler{})
 ```
 
-## 🔧 Built-in Commands
+##  Built-in Commands
 
 RedKit comes with essential Redis commands:
 
@@ -259,7 +260,7 @@ RedKit comes with essential Redis commands:
 - `ECHO` - Echo messages (`ECHO hello` → `hello`)
 - `QUIT` - Close connection gracefully
 
-## 🛡️ Security & TLS
+## 🛡 Security & TLS
 
 ```go
 import "crypto/tls"
@@ -270,14 +271,6 @@ server.TLSConfig = &tls.Config{
     CertFile: "server.crt",
     KeyFile:  "server.key",
 }
-```
-
-## 📊 Performance & Benchmarks
-
-### Benchmark Results (Apple M1 Pro)
-```
-BenchmarkPingCommand-10      55,675 ops    19.4 µs/op
-BenchmarkSetGet-10           30,325 ops    41.8 µs/op
 ```
 
 ### Tested Scenarios
@@ -322,7 +315,7 @@ go test -race -v
 7. **Enable TLS** only when needed (adds ~5-10µs latency)
 
 
-## 🔍 Monitoring & Debugging
+##  Monitoring & Debugging
 
 ```go
 // Track connection states
@@ -340,7 +333,7 @@ if server.IsShutdown() {
 }
 ```
 
-## 🚨 Error Handling
+##  Error Handling
 
 RedKit provides comprehensive error handling:
 
