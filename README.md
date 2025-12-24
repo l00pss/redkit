@@ -9,9 +9,9 @@
   [![Redis Compatible](https://img.shields.io/badge/Redis-Compatible-red.svg)](https://redis.io/)
 </div>
 
-A Redis-compatible server framework for Go 🐹
+A Redis-compatible server framework for Go 
 
-## 📖 Overview
+##  Overview
 
 RedKit is a lightweight, high-performance Redis-compatible server framework written in Go. It provides a foundation for building Redis-compatible applications and services, allowing you to implement custom Redis protocol handlers while maintaining compatibility with existing Redis clients and tools.
 
