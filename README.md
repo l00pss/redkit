@@ -15,7 +15,7 @@ A Redis-compatible server framework for Go 🐹
 
 RedKit is a lightweight, high-performance Redis-compatible server framework written in Go. It provides a foundation for building Redis-compatible applications and services, allowing you to implement custom Redis protocol handlers while maintaining compatibility with existing Redis clients and tools.
 
-**🎯 Perfect for**: Custom Redis implementations, Redis proxies, specialized data stores, testing environments, and educational purposes.
+** Perfect for**: Custom Redis implementations, Redis proxies, specialized data stores, testing environments, and educational purposes.
 
 ##  Features
 
@@ -260,7 +260,7 @@ RedKit comes with essential Redis commands:
 - `ECHO` - Echo messages (`ECHO hello` → `hello`)
 - `QUIT` - Close connection gracefully
 
-## 🛡 Security & TLS
+##  Security & TLS
 
 ```go
 import "crypto/tls"
