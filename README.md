@@ -1,6 +1,6 @@
 <br>
 <div align="center">
-  <img src="logo.png" alt="RedKit Logo" width="400"/>
+  <img src="logo.png" alt="RedKit Logo" width="600"/>
   <br><br>
   
   [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://golang.org/)
