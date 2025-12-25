@@ -1,32 +1,93 @@
+/*
+Package redkit provides a comprehensive Redis-compatible server implementation.
+
+This file defines all Redis command types and their registration helper functions.
+The commands are organized into functional categories following Redis documentation.
+
+Command Categories:
+- Connection Commands: Basic server communication (PING, ECHO, QUIT)
+- String Commands: String operations (GET, SET, INCR, APPEND, etc.)
+- Hash Commands: Hash table operations (HGET, HSET, HKEYS, etc.)
+- List Commands: List operations (LPUSH, RPOP, LRANGE, etc.)
+- Set Commands: Set operations (SADD, SREM, SMEMBERS, etc.)
+- Sorted Set Commands: Ordered set operations (ZADD, ZRANGE, ZSCORE, etc.)
+- Stream Commands: Stream data structure operations (XADD, XREAD, etc.)
+- Bitmap Commands: Bit manipulation (BITCOUNT, SETBIT, GETBIT, etc.)
+- HyperLogLog Commands: Probabilistic cardinality estimation (PFADD, PFCOUNT, etc.)
+- Geospatial Commands: Geographic operations (GEOADD, GEORADIUS, etc.)
+- JSON Commands: JSON data operations (JSON.GET, JSON.SET, etc.)
+- Search Commands: Full-text search (FT.SEARCH, FT.CREATE, etc.)
+- Time Series Commands: Time-series data (TS.ADD, TS.RANGE, etc.)
+- Vector Set Commands: Vector similarity operations (VADD, VSIM, etc.)
+- Pub/Sub Commands: Message publishing/subscribing (PUBLISH, SUBSCRIBE, etc.)
+- Transaction Commands: Atomic operations (MULTI, EXEC, WATCH, etc.)
+- Scripting Commands: Lua script execution (EVAL, EVALSHA, etc.)
+- Server Commands: Server management (INFO, CONFIG, SAVE, etc.)
+- Cluster Commands: Redis cluster operations (CLUSTER, ASKING, etc.)
+- Generic Commands: Key management (DEL, EXISTS, EXPIRE, TTL, etc.)
+
+Usage Example:
+
+	server := redkit.NewServer()
+
+	// Register custom GET handler
+	server.registerGetHandler(func(conn *Connection, cmd *Command) RedisValue {
+		// Custom GET implementation
+		return RedisValue{Type: SimpleString, Str: "value"}
+	})
+
+	// Start server
+	server.ListenAndServe(":6379")
+
+Each command has a corresponding registration helper function that follows the pattern:
+
+	register{CommandName}Handler(f func(conn *Connection, cmd *Command) RedisValue)
+
+This allows for easy customization and extension of command behavior while maintaining
+Redis protocol compatibility.
+*/
 package redkit
 
+// CommandType represents Redis command names as typed string constants
+// This ensures type safety and provides intellisense support for command names
 type CommandType string
 
-const (
-	PING CommandType = "PING"
-	ECHO CommandType = "ECHO"
-	QUIT CommandType = "QUIT"
-	HELP CommandType = "HELP"
+/*
+Redis Command Type Constants
 
-	//String Commands
-	APPEND      CommandType = "APPEND"
-	DECR        CommandType = "DECR"
-	DECRBY      CommandType = "DECRBY"
-	DELEX       CommandType = "DELEX"
-	DIGEST      CommandType = "DIGEST"
-	GET         CommandType = "GET"
-	GETDEL      CommandType = "GETDEL"
-	GETEX       CommandType = "GETEX"
-	GETRANGE    CommandType = "GETRANGE"
-	GETSET      CommandType = "GETSET"
-	INCR        CommandType = "INCR"
-	INCRBY      CommandType = "INCRBY"
-	INCRBYFLOAT CommandType = "INCRBYFLOAT"
-	LCS         CommandType = "LCS"
-	MGET        CommandType = "MGET"
-	MSET        CommandType = "MSET"
-	MSETEX      CommandType = "MSETEX"
-	MSETNX      CommandType = "MSETNX"
+All Redis commands are defined as strongly-typed constants to prevent typos
+and provide IDE autocompletion. Commands are organized by functional category
+matching the official Redis documentation structure.
+
+The constants follow the exact Redis command names (case-sensitive) to ensure
+protocol compatibility.
+*/
+const (
+	// Connection Commands - Basic server communication
+	PING CommandType = "PING" // Test server connectivity
+	ECHO CommandType = "ECHO" // Echo the given string
+	QUIT CommandType = "QUIT" // Close the connection
+	HELP CommandType = "HELP" // Show help information
+
+	// String Commands - Operations on string values
+	APPEND      CommandType = "APPEND"      // Append a value to a key
+	DECR        CommandType = "DECR"        // Decrement the integer value of a key by 1
+	DECRBY      CommandType = "DECRBY"      // Decrement the integer value of a key by the given amount
+	DELEX       CommandType = "DELEX"       // Delete key based on value comparison
+	DIGEST      CommandType = "DIGEST"      // Return hash digest of a string value
+	GET         CommandType = "GET"         // Get the value of a key
+	GETDEL      CommandType = "GETDEL"      // Get the value of a key and delete the key
+	GETEX       CommandType = "GETEX"       // Get the value of a key and set its expiration
+	GETRANGE    CommandType = "GETRANGE"    // Get a substring of the string stored at a key
+	GETSET      CommandType = "GETSET"      // Set the value of a key and return its old value
+	INCR        CommandType = "INCR"        // Increment the integer value of a key by 1
+	INCRBY      CommandType = "INCRBY"      // Increment the integer value of a key by the given amount
+	INCRBYFLOAT CommandType = "INCRBYFLOAT" // Increment the float value of a key by the given amount
+	LCS         CommandType = "LCS"         // Find the longest common substring
+	MGET        CommandType = "MGET"        // Get the values of all the given keys
+	MSET        CommandType = "MSET"        // Set multiple keys to multiple values
+	MSETEX      CommandType = "MSETEX"      // Set multiple keys with expiration time
+	MSETNX      CommandType = "MSETNX"      // Set multiple keys to multiple values, only if none exist
 	PSETEX      CommandType = "PSETEX"
 	SET         CommandType = "SET"
 	SETEX       CommandType = "SETEX"
@@ -379,6 +440,23 @@ const (
 	WAITAOF     CommandType = "WAITAOF"
 )
 
+/*
+Default Command Handlers
+
+registerDefaultHandlers sets up the basic Redis protocol commands that are
+essential for client connectivity and server interaction. These handlers
+implement the minimum functionality required for Redis compatibility:
+
+- PING: Connectivity testing with optional message echo
+- ECHO: Simple string echo for testing
+- HELP: Basic command information
+- QUIT: Graceful connection termination
+
+Custom implementations can override these by registering new handlers
+with the same command names, or extend functionality by registering
+additional commands.
+*/
+
 // registerDefaultHandlers registers the built-in Redis commands
 func (s *Server) registerDefaultHandlers() {
 	// PING command
@@ -416,6 +494,346 @@ func (s *Server) registerDefaultHandlers() {
 	})
 }
 
+/*
+Command Registration Helper Functions
+
+These functions provide a convenient way to register custom handlers for Redis commands.
+Each function follows the pattern: register{CommandName}Handler(handlerFunc)
+
+The handler function signature is always:
+	func(conn *Connection, cmd *Command) RedisValue
+
+Where:
+- conn: The client connection context
+- cmd: The parsed command with arguments
+- RedisValue: The response to send back to the client
+
+Example usage:
+	server.registerGetHandler(func(conn *Connection, cmd *Command) RedisValue {
+		key := cmd.Args[0]
+		value := myStorage.Get(key)
+		return RedisValue{Type: BulkString, Bulk: []byte(value)}
+	})
+*/
+
+// ====================
+// CONNECTION COMMANDS
+// ====================
+
+// registerPingHandler registers a custom handler for the PING command
+// PING [message] - Test connectivity and optionally echo a message
+func (s *Server) registerPingHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(PING), f)
+}
+
+// registerEchoHandler registers a custom handler for the ECHO command
+// ECHO message - Return the given string
+func (s *Server) registerEchoHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(ECHO), f)
+}
+
+// registerQuitHandler registers a custom handler for the QUIT command
+// QUIT - Close the connection
+func (s *Server) registerQuitHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(QUIT), f)
+}
+
+// registerHelpHandler registers a custom handler for the HELP command
+// HELP - Show available commands and their descriptions
+func (s *Server) registerHelpHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HELP), f)
+}
+
+// ====================
+// STRING COMMANDS
+// ====================
+
+// registerAppendHandler registers a custom handler for the APPEND command
+// APPEND key value - Append a value to a string
+func (s *Server) registerAppendHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(APPEND), f)
+}
+
+func (s *Server) registerDecrHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(DECR), f)
+}
+
+func (s *Server) registerDecrbyHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(DECRBY), f)
+}
+
+func (s *Server) registerDelexHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(DELEX), f)
+}
+
+func (s *Server) registerDigestHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(DIGEST), f)
+}
+
+// registerGetHandler registers a custom handler for the GET command
+// GET key - Get the value of a key
 func (s *Server) registerGetHandler(f func(conn *Connection, cmd *Command) RedisValue) {
 	s.RegisterCommandFunc(string(GET), f)
+}
+
+// registerGetdelHandler registers a custom handler for the GETDEL command
+// GETDEL key - Get the value of a key and delete the key
+func (s *Server) registerGetdelHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(GETDEL), f)
+}
+
+func (s *Server) registerGetexHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(GETEX), f)
+}
+
+func (s *Server) registerGetrangeHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(GETRANGE), f)
+}
+
+func (s *Server) registerGetsetHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(GETSET), f)
+}
+
+func (s *Server) registerIncrHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(INCR), f)
+}
+
+func (s *Server) registerIncrbyHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(INCRBY), f)
+}
+
+func (s *Server) registerIncrbyfloatHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(INCRBYFLOAT), f)
+}
+
+func (s *Server) registerLcsHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(LCS), f)
+}
+
+func (s *Server) registerMgetHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(MGET), f)
+}
+
+func (s *Server) registerMsetHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(MSET), f)
+}
+
+func (s *Server) registerMsetexHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(MSETEX), f)
+}
+
+func (s *Server) registerMsetnxHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(MSETNX), f)
+}
+
+func (s *Server) registerPsetexHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(PSETEX), f)
+}
+
+// registerSetHandler registers a custom handler for the SET command
+// SET key value [EX seconds|PX milliseconds|KEEPTTL] [NX|XX] - Set the string value of a key
+func (s *Server) registerSetHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SET), f)
+}
+
+func (s *Server) registerSetexHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SETEX), f)
+}
+
+func (s *Server) registerSetnxHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SETNX), f)
+}
+
+func (s *Server) registerSetrangeHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SETRANGE), f)
+}
+
+func (s *Server) registerStrlenHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(STRLEN), f)
+}
+
+func (s *Server) registerSubstrHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SUBSTR), f)
+}
+
+// ====================
+// HASH COMMANDS
+// ====================
+
+// registerHdelHandler registers a custom handler for the HDEL command
+// HDEL key field [field ...] - Delete one or more hash fields
+func (s *Server) registerHdelHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HDEL), f)
+}
+
+func (s *Server) registerHexistsHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HEXISTS), f)
+}
+
+func (s *Server) registerHgetHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HGET), f)
+}
+
+func (s *Server) registerHgetallHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HGETALL), f)
+}
+
+func (s *Server) registerHkeysHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HKEYS), f)
+}
+
+func (s *Server) registerHlenHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HLEN), f)
+}
+
+func (s *Server) registerHsetHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HSET), f)
+}
+
+func (s *Server) registerHvalsHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(HVALS), f)
+}
+
+// ====================
+// LIST COMMANDS
+// ====================
+
+// registerLindexHandler registers a custom handler for the LINDEX command
+// LINDEX key index - Get an element from a list by its index
+func (s *Server) registerLindexHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(LINDEX), f)
+}
+
+func (s *Server) registerLlenHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(LLEN), f)
+}
+
+func (s *Server) registerLpopHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(LPOP), f)
+}
+
+func (s *Server) registerLpushHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(LPUSH), f)
+}
+
+func (s *Server) registerLrangeHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(LRANGE), f)
+}
+
+func (s *Server) registerRpopHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(RPOP), f)
+}
+
+func (s *Server) registerRpushHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(RPUSH), f)
+}
+
+// ====================
+// SET COMMANDS
+// ====================
+
+// registerSaddHandler registers a custom handler for the SADD command
+// SADD key member [member ...] - Add one or more members to a set
+func (s *Server) registerSaddHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SADD), f)
+}
+
+func (s *Server) registerScardHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SCARD), f)
+}
+
+func (s *Server) registerSismemberHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SISMEMBER), f)
+}
+
+func (s *Server) registerSmembersHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SMEMBERS), f)
+}
+
+func (s *Server) registerSremHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SREM), f)
+}
+
+// ====================
+// SORTED SET COMMANDS
+// ====================
+
+// registerZaddHandler registers a custom handler for the ZADD command
+// ZADD key [NX|XX] [CH] [INCR] score member [score member ...] - Add one or more members to a sorted set
+func (s *Server) registerZaddHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(ZADD), f)
+}
+
+func (s *Server) registerZcardHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(ZCARD), f)
+}
+
+func (s *Server) registerZrangeHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(ZRANGE), f)
+}
+
+func (s *Server) registerZrankHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(ZRANK), f)
+}
+
+func (s *Server) registerZremHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(ZREM), f)
+}
+
+func (s *Server) registerZscoreHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(ZSCORE), f)
+}
+
+// ====================
+// GENERIC COMMANDS
+// ====================
+
+// registerDelHandler registers a custom handler for the DEL command
+// DEL key [key ...] - Delete one or more keys
+func (s *Server) registerDelHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(DEL), f)
+}
+
+func (s *Server) registerExistsHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(EXISTS), f)
+}
+
+func (s *Server) registerExpireHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(EXPIRE), f)
+}
+
+func (s *Server) registerTtlHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(TTL), f)
+}
+
+func (s *Server) registerKeysHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(KEYS), f)
+}
+
+func (s *Server) registerFlushAllHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(FLUSHALL), f)
+}
+
+func (s *Server) registerFlushDBHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(FLUSHDB), f)
+}
+
+func (s *Server) registerAuthHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(AUTH), f)
+}
+
+func (s *Server) registerDbSizeHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(DBSIZE), f)
+}
+
+func (s *Server) registerInfoHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(INFO), f)
+}
+
+func (s *Server) registerSaveHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(SAVE), f)
+}
+
+func (s *Server) registerTimeHandler(f func(conn *Connection, cmd *Command) RedisValue) {
+	s.RegisterCommandFunc(string(TIME), f)
 }

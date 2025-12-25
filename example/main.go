@@ -33,7 +33,7 @@ func main() {
 	// Register a simple SET/GET simulation
 	storage := make(map[string]string)
 
-	server.RegisterCommandFunc("SET", func(conn *redkit.Connection, cmd *redkit.Command) redkit.RedisValue {
+	server.RegisterCommandFunc(string(redkit.SET), func(conn *redkit.Connection, cmd *redkit.Command) redkit.RedisValue {
 		if len(cmd.Args) != 2 {
 			return redkit.RedisValue{
 				Type: redkit.ErrorReply,
@@ -47,7 +47,7 @@ func main() {
 		}
 	})
 
-	server.RegisterCommandFunc("GET", func(conn *redkit.Connection, cmd *redkit.Command) redkit.RedisValue {
+	server.RegisterCommandFunc(string(redkit.GET), func(conn *redkit.Connection, cmd *redkit.Command) redkit.RedisValue {
 		if len(cmd.Args) != 1 {
 			return redkit.RedisValue{
 				Type: redkit.ErrorReply,

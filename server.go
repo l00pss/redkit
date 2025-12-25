@@ -1,3 +1,60 @@
+/*
+Package redkit implements the core server functionality for a Redis-compatible server.
+
+This file contains the main server implementation including:
+
+Core Server Operations:
+- Server lifecycle management (Listen, Serve, Shutdown)
+- Connection handling and state management
+- Command routing and processing
+- Resource management and limits
+
+Connection Management:
+- TCP and TLS listener support
+- Connection pooling and tracking
+- Idle connection detection and cleanup
+- Graceful connection termination
+
+Command Processing:
+- Redis protocol (RESP) command parsing
+- Command handler registration and routing
+- Response serialization and buffering
+- Error handling and logging
+
+Performance Features:
+- Configurable timeouts (Read, Write, Idle)
+- Connection limits and resource constraints
+- Buffered I/O for optimal throughput
+- Background idle connection cleanup
+
+Production Features:
+- Graceful shutdown with connection draining
+- Comprehensive error logging and monitoring
+- Connection state hooks for metrics collection
+- Thread-safe concurrent operations
+
+Usage Example:
+
+	server := redkit.NewServer(":6379")
+
+	// Configure server
+	server.ReadTimeout = 30 * time.Second
+	server.MaxConnections = 1000
+	server.TLSConfig = &tls.Config{...}
+
+	// Register custom commands
+	server.RegisterCommandFunc("CUSTOM", func(conn *Connection, cmd *Command) RedisValue {
+		return RedisValue{Type: SimpleString, Str: "OK"}
+	})
+
+	// Start server
+	log.Fatal(server.ListenAndServe())
+
+Architecture:
+The server uses a goroutine-per-connection model with shared state protected
+by appropriate synchronization primitives. Each client connection runs in its
+own goroutine, enabling high concurrency while maintaining thread safety.
+*/
 package redkit
 
 import (
@@ -11,6 +68,33 @@ import (
 	"strings"
 	"time"
 )
+
+/*
+Server Construction and Initialization
+
+NewServer creates a fully configured Redis-compatible server instance with
+sensible defaults for production use. The server is ready to accept
+connections after creation.
+
+Default Configuration:
+- ReadTimeout: 30 seconds (prevents hung connections)
+- WriteTimeout: 30 seconds (ensures responsive clients)
+- IdleTimeout: 120 seconds (automatic cleanup of unused connections)
+- MaxConnections: 1000 (reasonable limit for most applications)
+- ErrorLog: Standard logger with [RedKit] prefix
+
+The server automatically:
+- Registers default Redis commands (PING, ECHO, QUIT, HELP)
+- Starts background idle connection monitoring
+- Initializes thread-safe connection tracking
+- Sets up graceful shutdown coordination
+
+Parameters:
+- address: Network address to bind (e.g., ":6379", "127.0.0.1:6379")
+
+Returns:
+- *Server: Configured server instance ready for use
+*/
 
 // NewServer creates a new Redis-compatible server instance
 func NewServer(address string) *Server {
@@ -38,7 +122,28 @@ func NewServer(address string) *Server {
 	return server
 }
 
+/*
+Command Handler Registration
+
+These methods enable registration of custom command handlers to extend
+server functionality. Commands are case-insensitive and automatically
+converted to uppercase for consistent routing.
+
+Thread Safety:
+All registration methods are thread-safe and can be called concurrently
+with server operations. However, it's recommended to register all handlers
+before starting the server for better performance.
+
+Handler Lifecycle:
+Handlers receive parsed commands and connection context, enabling:
+- Access to client connection state and metadata
+- Custom response generation and error handling
+- Connection-specific behavior and state management
+*/
+
 // RegisterCommand registers a command handler
+// name: Command name (case-insensitive, e.g., "GET", "set", "MyCommand")
+// handler: CommandHandler implementation to process the command
 func (s *Server) RegisterCommand(name string, handler CommandHandler) {
 	if name == "" || handler == nil {
 		return
@@ -48,7 +153,12 @@ func (s *Server) RegisterCommand(name string, handler CommandHandler) {
 	s.handlers[strings.ToUpper(name)] = handler
 }
 
-// RegisterCommandFunc registers a command handler function
+// RegisterCommandFunc registers a function as a command handler
+// This is a convenience method for registering function handlers without
+// implementing the CommandHandler interface explicitly
+//
+// name: Command name (case-insensitive)
+// handler: Function with signature func(*Connection, *Command) RedisValue
 func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Command) RedisValue) {
 	if name == "" || handler == nil {
 		return
@@ -56,7 +166,20 @@ func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Com
 	s.RegisterCommand(name, CommandHandlerFunc(handler))
 }
 
+/*
+Network Listener Management
+
+These methods control the server's network listener lifecycle.
+The server supports both plain TCP and TLS-encrypted connections
+based on the TLSConfig setting.
+*/
+
 // Listen starts listening on the configured address
+// Creates either a TCP or TLS listener based on server configuration.
+// This method is idempotent and can be called multiple times safely.
+//
+// Returns:
+// - error: Network binding errors or address conflicts
 func (s *Server) Listen() error {
 	var err error
 	if s.TLSConfig != nil {
@@ -74,6 +197,18 @@ func (s *Server) Listen() error {
 }
 
 // Serve starts accepting connections (blocking)
+// This method blocks until the server shuts down or encounters a fatal error.
+// Each accepted connection is handled in its own goroutine for concurrency.
+//
+// Connection Processing:
+// - Enforces MaxConnections limit (rejects excess connections)
+// - Tracks active connections for monitoring and shutdown
+// - Handles connection state transitions and lifecycle
+//
+// Error Handling:
+// - Logs connection errors without stopping the server
+// - Gracefully handles shutdown signals
+// - Returns nil on clean shutdown, error on fatal conditions
 func (s *Server) Serve() error {
 	if s.listener == nil {
 		if err := s.Listen(); err != nil {
@@ -108,7 +243,28 @@ func (s *Server) Serve() error {
 	}
 }
 
+/*
+Graceful Server Shutdown
+
+Shutdown coordinates a clean server termination with proper resource cleanup
+and connection draining. This ensures data integrity and prevents abrupt
+client disconnections.
+
+Shutdown Process:
+1. Set shutdown flag to stop accepting new connections
+2. Close network listener to reject incoming requests
+3. Close all active client connections gracefully
+4. Execute registered shutdown hooks for cleanup
+5. Wait for all connection goroutines to terminate
+6. Respect context timeout for forced termination
+
+The method is safe to call multiple times and coordinates with background
+processes like idle connection monitoring.
+*/
+
 // Shutdown gracefully shuts down the server
+// ctx: Context with timeout for maximum shutdown duration
+// Returns: Context timeout error or nil on successful shutdown
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.inShutdown.Store(true)
 	s.cancel()
@@ -153,7 +309,22 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 }
 
+/*
+Connection Lifecycle Management
+
+These methods manage individual client connections from establishment
+through command processing to graceful termination.
+*/
+
 // handleConnection handles a single client connection
+// Runs in its own goroutine for each client connection.
+// Manages the complete connection lifecycle including:
+// - Connection context and cancellation
+// - Buffered I/O setup for optimal performance
+// - State tracking and hook notifications
+// - Command parsing and response handling
+// - Timeout enforcement and error recovery
+// - Resource cleanup on connection termination
 func (s *Server) handleConnection(netConn net.Conn) {
 	defer s.wg.Done()
 
@@ -248,6 +419,21 @@ func (s *Server) handleConnection(netConn net.Conn) {
 }
 
 // handleCommand processes a Redis command
+// Routes parsed commands to registered handlers and provides error handling
+// for unknown commands and processing failures.
+//
+// Command Processing:
+// - Validates command structure and name
+// - Performs case-insensitive handler lookup
+// - Delegates to appropriate command handler
+// - Generates error responses for unknown commands
+//
+// Parameters:
+// - conn: Client connection context
+// - cmd: Parsed command with arguments
+//
+// Returns:
+// - RedisValue: Response to send to client (success or error)
 func (s *Server) handleCommand(conn *Connection, cmd *Command) RedisValue {
 	if cmd == nil || cmd.Name == "" {
 		return RedisValue{
@@ -270,7 +456,16 @@ func (s *Server) handleCommand(conn *Connection, cmd *Command) RedisValue {
 	return handler.Handle(conn, cmd)
 }
 
+/*
+Server Utility and Management Methods
+
+These methods provide server introspection, lifecycle management,
+and maintenance functionality for monitoring and operations.
+*/
+
 // OnShutdown registers a function to call on shutdown
+// Useful for cleanup tasks, metric flushing, or resource deallocation.
+// Hooks are executed during graceful shutdown before connection termination.
 func (s *Server) OnShutdown(f func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -278,21 +473,34 @@ func (s *Server) OnShutdown(f func()) {
 }
 
 // GetActiveConnections returns the number of active connections
+// Thread-safe method for monitoring server load and connection usage.
 func (s *Server) GetActiveConnections() int64 {
 	return s.connCount.Load()
 }
 
 // IsShutdown returns whether the server is shutting down
+// Useful for conditional logic during server lifecycle transitions.
 func (s *Server) IsShutdown() bool {
 	return s.inShutdown.Load()
 }
 
 // TriggerIdleCheck manually triggers idle connection checking (for testing)
+// Primarily used for testing idle timeout functionality.
 func (s *Server) TriggerIdleCheck() {
 	s.checkIdleConnections()
 }
 
+/*
+Connection Monitoring and Maintenance
+
+These methods implement background connection monitoring and automatic
+cleanup of idle connections to prevent resource leaks and optimize
+server performance.
+*/
+
 // startIdleChecker starts a background goroutine to check for idle connections
+// Runs continuously until server shutdown, checking every 30 seconds.
+// Automatically transitions unused connections from Active to Idle state.
 func (s *Server) startIdleChecker() {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
@@ -310,6 +518,8 @@ func (s *Server) startIdleChecker() {
 }
 
 // checkIdleConnections checks all active connections for idle timeout
+// Transitions connections that exceed IdleTimeout from Active to Idle state.
+// This helps identify and manage unused connections for potential cleanup.
 func (s *Server) checkIdleConnections() {
 	if s.IdleTimeout <= 0 {
 		return // Idle timeout disabled
@@ -341,6 +551,8 @@ func (s *Server) checkIdleConnections() {
 }
 
 // setConnectionActive sets a connection to active state (used when receiving commands)
+// Transitions idle connections back to active state when they receive new commands.
+// This maintains accurate connection state and enables proper idle timeout management.
 func (s *Server) setConnectionActive(conn *Connection) {
 	currentState := ConnState(conn.state.Load())
 	if currentState == StateIdle {
