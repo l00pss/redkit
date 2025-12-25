@@ -40,6 +40,9 @@ func NewServer(address string) *Server {
 
 // RegisterCommand registers a command handler
 func (s *Server) RegisterCommand(name string, handler CommandHandler) {
+	if name == "" || handler == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handlers[strings.ToUpper(name)] = handler
@@ -47,6 +50,9 @@ func (s *Server) RegisterCommand(name string, handler CommandHandler) {
 
 // RegisterCommandFunc registers a command handler function
 func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Command) RedisValue) {
+	if name == "" || handler == nil {
+		return
+	}
 	s.RegisterCommand(name, CommandHandlerFunc(handler))
 }
 
