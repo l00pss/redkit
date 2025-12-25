@@ -332,20 +332,8 @@ go test -race -v
 go test -cover -v
 ```
 
-### Test Coverage (51.2%)
-- **Basic Commands**: PING, ECHO with real Redis client
-- **String Operations**: SET, GET, MSET, MGET, SETNX
-- **Key Management**: DEL, EXISTS, TYPE, KEYS, FLUSHDB
-- **Numeric Operations**: INCR, DECR, INCRBY, DECRBY
-- **Expiration**: EXPIRE, TTL, key expiration behavior
-- **Advanced Features**: Multi-key operations, conditional operations
-- **Concurrent Access**: Thread-safety with 20+ goroutines
-- **Error Handling**: Invalid commands, type mismatches
-- **Connection Management**: State transitions, idle detection
-- **Performance**: High-volume operations (10,000+ keys)
-- **Stress Testing**: Rapid operations and memory management
 
-### Performance Benchmarks (M1 Pro)
+### Performance Benchmarks
 - **SET**: ~14,181 ns/op (70,546 ops/sec)
 - **GET**: ~14,559 ns/op (68,685 ops/sec) 
 - **INCR**: ~14,384 ns/op (69,520 ops/sec)
