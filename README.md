@@ -196,7 +196,7 @@ OK
 (integer) 1
 ```
 
-## 📚 API Reference
+##  API Reference
 
 ### Server Configuration
 
@@ -332,15 +332,6 @@ go test -race -v
 go test -cover -v
 ```
 
-
-### Performance Benchmarks
-- **SET**: ~14,181 ns/op (70,546 ops/sec)
-- **GET**: ~14,559 ns/op (68,685 ops/sec) 
-- **INCR**: ~14,384 ns/op (69,520 ops/sec)
-- **EXISTS**: ~14,501 ns/op (68,961 ops/sec)
-- **MSET/MGET**: ~28,977 ns/op (34,508 ops/sec)
-- **DEL**: ~28,937 ns/op (34,556 ops/sec)
-
 ##  Performance Tips
 
 1. **Use connection pooling** in your clients
@@ -383,7 +374,6 @@ server.RegisterCommandFunc("VALIDATE", func(conn *Connection, cmd *Command) Redi
         }
     }
     
-    // Validate arguments
     if !isValid(cmd.Args[0]) {
         return RedisValue{
             Type: ErrorReply,

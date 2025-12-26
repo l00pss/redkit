@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -30,8 +31,9 @@ func main() {
 		}
 	})
 
-	// Register a simple SET/GET simulation
+	// Register a simple SET/GET simulation with thread-safe storage
 	storage := make(map[string]string)
+	var storageMu sync.RWMutex
 
 	server.RegisterCommandFunc(string(redkit.SET), func(conn *redkit.Connection, cmd *redkit.Command) redkit.RedisValue {
 		if len(cmd.Args) != 2 {
@@ -40,7 +42,9 @@ func main() {
 				Str:  "ERR wrong number of arguments for 'set' command",
 			}
 		}
+		storageMu.Lock()
 		storage[cmd.Args[0]] = cmd.Args[1]
+		storageMu.Unlock()
 		return redkit.RedisValue{
 			Type: redkit.SimpleString,
 			Str:  "OK",
@@ -54,13 +58,30 @@ func main() {
 				Str:  "ERR wrong number of arguments for 'get' command",
 			}
 		}
+		storageMu.RLock()
 		value, exists := storage[cmd.Args[0]]
+		storageMu.RUnlock()
 		if !exists {
 			return redkit.RedisValue{Type: redkit.Null}
 		}
 		return redkit.RedisValue{
 			Type: redkit.BulkString,
 			Bulk: []byte(value),
+		}
+	})
+
+	// Register CONFIG command (for redis-benchmark compatibility)
+	server.RegisterCommandFunc("CONFIG", func(conn *redkit.Connection, cmd *redkit.Command) redkit.RedisValue {
+		// Simple CONFIG GET implementation
+		if len(cmd.Args) >= 2 && cmd.Args[0] == "GET" {
+			return redkit.RedisValue{
+				Type:  redkit.Array,
+				Array: []redkit.RedisValue{},
+			}
+		}
+		return redkit.RedisValue{
+			Type: redkit.SimpleString,
+			Str:  "OK",
 		}
 	})
 
@@ -81,7 +102,6 @@ func main() {
 		os.Exit(0)
 	}()
 
-	// Start the server
 	fmt.Println("Starting RedKit server on :6379...")
 	fmt.Println("You can test it with redis-cli or any Redis client")
 	fmt.Println("Try commands like: PING, HELLO, HELLO world, SET key value, GET key")

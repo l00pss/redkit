@@ -76,7 +76,7 @@ func (c *Connection) readValue() (RedisValue, error) {
 	case '*': // Array
 		return c.readArray(line[1:])
 	default:
-		return RedisValue{}, fmt.Errorf("invalid type indicator: %c", line[0])
+		return RedisValue{}, fmt.Errorf("invalid RESP protocol indicator: %c (0x%02x)", line[0], line[0])
 	}
 }
 
@@ -124,7 +124,6 @@ func (c *Connection) readBulkString(sizeBytes []byte) (RedisValue, error) {
 		return RedisValue{}, err
 	}
 
-	// Remove CRLF
 	return RedisValue{Type: BulkString, Bulk: data[:size]}, nil
 }
 
