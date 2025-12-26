@@ -1,93 +1,34 @@
-/*
-Package redkit provides a comprehensive Redis-compatible server implementation.
-
-This file defines all Redis command types and their registration helper functions.
-The commands are organized into functional categories following Redis documentation.
-
-Command Categories:
-- Connection Commands: Basic server communication (PING, ECHO, QUIT)
-- String Commands: String operations (GET, SET, INCR, APPEND, etc.)
-- Hash Commands: Hash table operations (HGET, HSET, HKEYS, etc.)
-- List Commands: List operations (LPUSH, RPOP, LRANGE, etc.)
-- Set Commands: Set operations (SADD, SREM, SMEMBERS, etc.)
-- Sorted Set Commands: Ordered set operations (ZADD, ZRANGE, ZSCORE, etc.)
-- Stream Commands: Stream data structure operations (XADD, XREAD, etc.)
-- Bitmap Commands: Bit manipulation (BITCOUNT, SETBIT, GETBIT, etc.)
-- HyperLogLog Commands: Probabilistic cardinality estimation (PFADD, PFCOUNT, etc.)
-- Geospatial Commands: Geographic operations (GEOADD, GEORADIUS, etc.)
-- JSON Commands: JSON data operations (JSON.GET, JSON.SET, etc.)
-- Search Commands: Full-text search (FT.SEARCH, FT.CREATE, etc.)
-- Time Series Commands: Time-series data (TS.ADD, TS.RANGE, etc.)
-- Vector Set Commands: Vector similarity operations (VADD, VSIM, etc.)
-- Pub/Sub Commands: Message publishing/subscribing (PUBLISH, SUBSCRIBE, etc.)
-- Transaction Commands: Atomic operations (MULTI, EXEC, WATCH, etc.)
-- Scripting Commands: Lua script execution (EVAL, EVALSHA, etc.)
-- Server Commands: Server management (INFO, CONFIG, SAVE, etc.)
-- Cluster Commands: Redis cluster operations (CLUSTER, ASKING, etc.)
-- Generic Commands: Key management (DEL, EXISTS, EXPIRE, TTL, etc.)
-
-Usage Example:
-
-	server := redkit.NewServer()
-
-	// Register custom GET handler
-	server.registerGetHandler(func(conn *Connection, cmd *Command) RedisValue {
-		// Custom GET implementation
-		return RedisValue{Type: SimpleString, Str: "value"}
-	})
-
-	// Start server
-	server.ListenAndServe(":6379")
-
-Each command has a corresponding registration helper function that follows the pattern:
-
-	register{CommandName}Handler(f func(conn *Connection, cmd *Command) RedisValue)
-
-This allows for easy customization and extension of command behavior while maintaining
-Redis protocol compatibility.
-*/
 package redkit
 
-// CommandType represents Redis command names as typed string constants
-// This ensures type safety and provides intellisense support for command names
+// CommandType represents Redis command names
 type CommandType string
 
-/*
-Redis Command Type Constants
-
-All Redis commands are defined as strongly-typed constants to prevent typos
-and provide IDE autocompletion. Commands are organized by functional category
-matching the official Redis documentation structure.
-
-The constants follow the exact Redis command names (case-sensitive) to ensure
-protocol compatibility.
-*/
 const (
-	// Connection Commands - Basic server communication
+	// Connection Commands
 	PING CommandType = "PING" // Test server connectivity
 	ECHO CommandType = "ECHO" // Echo the given string
 	QUIT CommandType = "QUIT" // Close the connection
 	HELP CommandType = "HELP" // Show help information
 
-	// String Commands - Operations on string values
-	APPEND      CommandType = "APPEND"      // Append a value to a key
-	DECR        CommandType = "DECR"        // Decrement the integer value of a key by 1
-	DECRBY      CommandType = "DECRBY"      // Decrement the integer value of a key by the given amount
-	DELEX       CommandType = "DELEX"       // Delete key based on value comparison
-	DIGEST      CommandType = "DIGEST"      // Return hash digest of a string value
-	GET         CommandType = "GET"         // Get the value of a key
-	GETDEL      CommandType = "GETDEL"      // Get the value of a key and delete the key
-	GETEX       CommandType = "GETEX"       // Get the value of a key and set its expiration
-	GETRANGE    CommandType = "GETRANGE"    // Get a substring of the string stored at a key
-	GETSET      CommandType = "GETSET"      // Set the value of a key and return its old value
-	INCR        CommandType = "INCR"        // Increment the integer value of a key by 1
-	INCRBY      CommandType = "INCRBY"      // Increment the integer value of a key by the given amount
-	INCRBYFLOAT CommandType = "INCRBYFLOAT" // Increment the float value of a key by the given amount
-	LCS         CommandType = "LCS"         // Find the longest common substring
-	MGET        CommandType = "MGET"        // Get the values of all the given keys
-	MSET        CommandType = "MSET"        // Set multiple keys to multiple values
-	MSETEX      CommandType = "MSETEX"      // Set multiple keys with expiration time
-	MSETNX      CommandType = "MSETNX"      // Set multiple keys to multiple values, only if none exist
+	// String Commands
+	APPEND      CommandType = "APPEND"
+	DECR        CommandType = "DECR"
+	DECRBY      CommandType = "DECRBY"
+	DELEX       CommandType = "DELEX"
+	DIGEST      CommandType = "DIGEST"
+	GET         CommandType = "GET"
+	GETDEL      CommandType = "GETDEL"
+	GETEX       CommandType = "GETEX"
+	GETRANGE    CommandType = "GETRANGE"
+	GETSET      CommandType = "GETSET"
+	INCR        CommandType = "INCR"
+	INCRBY      CommandType = "INCRBY"
+	INCRBYFLOAT CommandType = "INCRBYFLOAT"
+	LCS         CommandType = "LCS"
+	MGET        CommandType = "MGET"
+	MSET        CommandType = "MSET"
+	MSETEX      CommandType = "MSETEX"
+	MSETNX      CommandType = "MSETNX"
 	PSETEX      CommandType = "PSETEX"
 	SET         CommandType = "SET"
 	SETEX       CommandType = "SETEX"
@@ -440,23 +381,6 @@ const (
 	WAITAOF     CommandType = "WAITAOF"
 )
 
-/*
-Default Command Handlers
-
-registerDefaultHandlers sets up the basic Redis protocol commands that are
-essential for client connectivity and server interaction. These handlers
-implement the minimum functionality required for Redis compatibility:
-
-- PING: Connectivity testing with optional message echo
-- ECHO: Simple string echo for testing
-- HELP: Basic command information
-- QUIT: Graceful connection termination
-
-Custom implementations can override these by registering new handlers
-with the same command names, or extend functionality by registering
-additional commands.
-*/
-
 // registerDefaultHandlers registers the built-in Redis commands
 func (s *Server) registerDefaultHandlers() {
 	// PING command
@@ -494,48 +418,22 @@ func (s *Server) registerDefaultHandlers() {
 	})
 }
 
-/*
-Command Registration Helper Functions
-
-These functions provide a convenient way to register custom handlers for Redis commands.
-Each function follows the pattern: register{CommandName}Handler(handlerFunc)
-
-The handler function signature is always:
-	func(conn *Connection, cmd *Command) RedisValue
-
-Where:
-- conn: The client connection context
-- cmd: The parsed command with arguments
-- RedisValue: The response to send back to the client
-
-Example usage:
-	server.registerGetHandler(func(conn *Connection, cmd *Command) RedisValue {
-		key := cmd.Args[0]
-		value := myStorage.Get(key)
-		return RedisValue{Type: BulkString, Bulk: []byte(value)}
-	})
-*/
-
 // registerPingHandler registers a custom handler for the PING command
-// PING [message] - Test connectivity and optionally echo a message
 func (s *Server) registerPingHandler(f func(conn *Connection, cmd *Command) RedisValue) {
 	s.RegisterCommandFunc(string(PING), f)
 }
 
 // registerEchoHandler registers a custom handler for the ECHO command
-// ECHO message - Return the given string
 func (s *Server) registerEchoHandler(f func(conn *Connection, cmd *Command) RedisValue) {
 	s.RegisterCommandFunc(string(ECHO), f)
 }
 
 // registerQuitHandler registers a custom handler for the QUIT command
-// QUIT - Close the connection
 func (s *Server) registerQuitHandler(f func(conn *Connection, cmd *Command) RedisValue) {
 	s.RegisterCommandFunc(string(QUIT), f)
 }
 
 // registerHelpHandler registers a custom handler for the HELP command
-// HELP - Show available commands and their descriptions
 func (s *Server) registerHelpHandler(f func(conn *Connection, cmd *Command) RedisValue) {
 	s.RegisterCommandFunc(string(HELP), f)
 }
