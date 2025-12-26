@@ -1,72 +1,3 @@
-/*
-Package redkit implements Redis Serialization Protocol (RESP) parsing and serialization.
-
-This file provides the core protocol implementation for reading and writing
-Redis protocol messages over network connections. It handles the complete
-RESP specification with support for all standard data types.
-
-RESP Protocol Overview:
-RESP is a binary-safe protocol that uses CRLF (\r\n) as line terminators.
-Each data type is prefixed with a single character type indicator:
-
-- Simple Strings: +OK\r\n
-- Error Messages: -ERR message\r\n
-- Integers: :42\r\n
-- Bulk Strings: $6\r\nhello!\r\n
-- Arrays: *2\r\n$3\r\nget\r\n$3\r\nkey\r\n
-- Null Values: $-1\r\n
-
-Command Processing Pipeline:
-1. Read RESP-encoded command from client connection
-2. Parse into structured Command with name and arguments
-3. Route to appropriate command handler
-4. Serialize handler response back to RESP format
-5. Write response to client connection
-
-Key Features:
-- Full RESP protocol compliance for Redis compatibility
-- Binary-safe data handling (supports arbitrary byte sequences)
-- Efficient streaming parser with minimal allocations
-- Robust error handling with descriptive error messages
-- Support for nested data structures (arrays of arrays)
-- Thread-safe when used with separate connections
-
-Performance Characteristics:
-- Streaming parser processes data as it arrives
-- Minimal memory allocation during parsing
-- Buffered I/O for optimal network performance
-- Direct byte manipulation to avoid string conversions
-- Efficient integer parsing with built-in validation
-
-Protocol Compliance:
-This implementation follows the official Redis RESP specification
-and maintains compatibility with all standard Redis clients including:
-- redis-cli (official command line client)
-- Language-specific Redis client libraries
-- Redis cluster and replication protocols
-- Redis Modules and custom protocol extensions
-
-Usage Example:
-
-	// Reading a command (typically done by server)
-	cmd, err := conn.readCommand()
-	if err != nil {
-		return err
-	}
-
-	// Processing and responding
-	response := RedisValue{
-		Type: SimpleString,
-		Str:  "OK",
-	}
-
-	return conn.writeValue(response)
-
-Error Handling:
-The protocol parser provides detailed error messages for debugging
-and maintains connection state even when encountering malformed data.
-All parsing errors are recoverable and won't corrupt the connection.
-*/
 package redkit
 
 import (
@@ -76,12 +7,6 @@ import (
 )
 
 /*
-Redis Command Parsing
-
-These methods handle the parsing of incoming Redis commands from client
-connections. Commands follow the RESP array format where the first element
-is the command name and subsequent elements are arguments.
-
 Command Format:
 *3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$5\r\nvalue\r\n
 
@@ -119,36 +44,29 @@ func (c *Connection) readCommand() (*Command, error) {
 		Raw: value.Array,
 	}
 
-	// Extract command name
-	if value.Array[0].Type == BulkString {
+	switch value.Array[0].Type {
+	case BulkString:
 		cmd.Name = string(value.Array[0].Bulk)
-	} else if value.Array[0].Type == SimpleString {
+	case SimpleString:
 		cmd.Name = value.Array[0].Str
-	} else {
+	default:
 		return nil, fmt.Errorf("invalid command name type")
 	}
 
-	// Extract arguments
 	cmd.Args = make([]string, len(value.Array)-1)
 	for i := 1; i < len(value.Array); i++ {
-		if value.Array[i].Type == BulkString {
+		switch value.Array[i].Type {
+		case BulkString:
 			cmd.Args[i-1] = string(value.Array[i].Bulk)
-		} else if value.Array[i].Type == SimpleString {
+		case SimpleString:
 			cmd.Args[i-1] = value.Array[i].Str
-		} else {
+		default:
 			return nil, fmt.Errorf("invalid argument type at index %d", i)
 		}
 	}
 
 	return cmd, nil
 }
-
-/*
-RESP Protocol Value Parsing
-
-These methods implement the core RESP protocol parser that handles
-all Redis data types according to the official specification.
-*/
 
 // readValue reads a Redis protocol value
 // Parses any RESP-encoded value by examining the first byte type indicator:
@@ -226,6 +144,7 @@ func (c *Connection) readLine() ([]byte, error) {
 // - $-1\r\n represents a null value
 // - $0\r\n\r\n represents an empty string
 // - Length must be non-negative (except -1 for null)
+// - Maximum size is 512MB (Redis default) to prevent DoS
 //
 // Parameters:
 // - sizeBytes: Length specification from protocol stream
@@ -245,6 +164,11 @@ func (c *Connection) readBulkString(sizeBytes []byte) (RedisValue, error) {
 
 	if size < 0 {
 		return RedisValue{}, fmt.Errorf("invalid bulk string size: %d", size)
+	}
+
+	const maxBulkStringSize = 512 * 1024 * 1024
+	if size > maxBulkStringSize {
+		return RedisValue{}, fmt.Errorf("bulk string too large: %d bytes (max: %d)", size, maxBulkStringSize)
 	}
 
 	// Read the bulk data plus CRLF
@@ -269,6 +193,7 @@ func (c *Connection) readBulkString(sizeBytes []byte) (RedisValue, error) {
 // - *-1\r\n represents a null array
 // - *0\r\n represents an empty array
 // - Count must be non-negative (except -1 for null)
+// - Maximum size is 1MB elements to prevent DoS
 //
 // Parameters:
 // - sizeBytes: Array size specification from protocol stream
@@ -288,6 +213,11 @@ func (c *Connection) readArray(sizeBytes []byte) (RedisValue, error) {
 
 	if size < 0 {
 		return RedisValue{}, fmt.Errorf("invalid array size: %d", size)
+	}
+
+	const maxArraySize = 1024 * 1024 // 1M elements
+	if size > maxArraySize {
+		return RedisValue{}, fmt.Errorf("array too large: %d elements (max: %d)", size, maxArraySize)
 	}
 
 	array := make([]RedisValue, size)

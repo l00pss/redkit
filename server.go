@@ -144,13 +144,14 @@ Handlers receive parsed commands and connection context, enabling:
 // RegisterCommand registers a command handler
 // name: Command name (case-insensitive, e.g., "GET", "set", "MyCommand")
 // handler: CommandHandler implementation to process the command
-func (s *Server) RegisterCommand(name string, handler CommandHandler) {
+func (s *Server) RegisterCommand(name string, handler CommandHandler) error {
 	if name == "" || handler == nil {
-		return
+		return fmt.Errorf("empty command name")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.handlers[strings.ToUpper(name)] = handler
+	return nil
 }
 
 // RegisterCommandFunc registers a function as a command handler
@@ -159,11 +160,11 @@ func (s *Server) RegisterCommand(name string, handler CommandHandler) {
 //
 // name: Command name (case-insensitive)
 // handler: Function with signature func(*Connection, *Command) RedisValue
-func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Command) RedisValue) {
+func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Command) RedisValue) error {
 	if name == "" || handler == nil {
-		return
+		return fmt.Errorf("empty command name")
 	}
-	s.RegisterCommand(name, CommandHandlerFunc(handler))
+	return s.RegisterCommand(name, CommandHandlerFunc(handler))
 }
 
 /*
@@ -228,18 +229,21 @@ func (s *Server) Serve() error {
 			continue
 		}
 
-		// Check connection limit
-		if s.MaxConnections > 0 && s.connCount.Load() >= int64(s.MaxConnections) {
-			err := conn.Close()
-			if err != nil {
-				return err
-			}
-			s.ErrorLog.Printf("Connection limit reached, rejecting connection from %s", conn.RemoteAddr())
-			continue
-		}
-
 		s.wg.Add(1)
-		go s.handleConnection(conn)
+		go func(netConn net.Conn) {
+			defer s.wg.Done()
+
+			// Check connection limit after Accept to prevent TOCTOU race
+			if s.MaxConnections > 0 && s.connCount.Add(1) > int64(s.MaxConnections) {
+				s.connCount.Add(-1)
+				netConn.Close()
+				s.ErrorLog.Printf("Connection limit reached, rejecting connection from %s", netConn.RemoteAddr())
+				return
+			}
+
+			s.handleConnectionInternal(netConn)
+			s.connCount.Add(-1)
+		}(conn)
 	}
 }
 
@@ -316,7 +320,7 @@ These methods manage individual client connections from establishment
 through command processing to graceful termination.
 */
 
-// handleConnection handles a single client connection
+// handleConnectionInternal handles a single client connection
 // Runs in its own goroutine for each client connection.
 // Manages the complete connection lifecycle including:
 // - Connection context and cancellation
@@ -325,8 +329,7 @@ through command processing to graceful termination.
 // - Command parsing and response handling
 // - Timeout enforcement and error recovery
 // - Resource cleanup on connection termination
-func (s *Server) handleConnection(netConn net.Conn) {
-	defer s.wg.Done()
+func (s *Server) handleConnectionInternal(netConn net.Conn) {
 
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
@@ -342,22 +345,18 @@ func (s *Server) handleConnection(netConn net.Conn) {
 	}
 
 	conn.state.Store(int32(StateNew))
-	s.connCount.Add(1)
 
-	// Add to active connections
 	s.mu.Lock()
 	s.activeConns[conn] = struct{}{}
 	s.mu.Unlock()
 
 	defer func() {
 		conn.Close()
-		s.connCount.Add(-1)
 		s.mu.Lock()
 		delete(s.activeConns, conn)
 		s.mu.Unlock()
 	}()
 
-	// Call state hook
 	if s.ConnStateHook != nil {
 		s.ConnStateHook(netConn, StateNew)
 	}
@@ -367,7 +366,6 @@ func (s *Server) handleConnection(netConn net.Conn) {
 		s.ConnStateHook(netConn, StateActive)
 	}
 
-	// Handle commands
 	for {
 		select {
 		case <-ctx.Done():
@@ -375,12 +373,13 @@ func (s *Server) handleConnection(netConn net.Conn) {
 		default:
 		}
 
-		// Set read timeout
 		if s.ReadTimeout > 0 {
-			netConn.SetReadDeadline(time.Now().Add(s.ReadTimeout))
+			if err := netConn.SetReadDeadline(time.Now().Add(s.ReadTimeout)); err != nil {
+				s.ErrorLog.Printf("Failed to set read deadline: %v", err)
+				return
+			}
 		}
 
-		// Parse command
 		cmd, err := conn.readCommand()
 		if err != nil {
 			if err != io.EOF {
@@ -389,15 +388,14 @@ func (s *Server) handleConnection(netConn net.Conn) {
 			return
 		}
 
+		conn.mu.Lock()
 		conn.lastUsed = time.Now()
+		conn.mu.Unlock()
 
-		// Set connection to active if it was idle
 		s.setConnectionActive(conn)
 
-		// Handle command
 		response := s.handleCommand(conn, cmd)
 
-		// Set write timeout
 		if s.WriteTimeout > 0 {
 			err := netConn.SetWriteDeadline(time.Now().Add(s.WriteTimeout))
 			if err != nil {
@@ -405,7 +403,6 @@ func (s *Server) handleConnection(netConn net.Conn) {
 			}
 		}
 
-		// Send response
 		if err := conn.writeValue(response); err != nil {
 			s.ErrorLog.Printf("Error writing response to %s: %v", netConn.RemoteAddr(), err)
 			return
@@ -427,6 +424,7 @@ func (s *Server) handleConnection(netConn net.Conn) {
 // - Performs case-insensitive handler lookup
 // - Delegates to appropriate command handler
 // - Generates error responses for unknown commands
+// - Recovers from panics in command handlers
 //
 // Parameters:
 // - conn: Client connection context
@@ -435,6 +433,12 @@ func (s *Server) handleConnection(netConn net.Conn) {
 // Returns:
 // - RedisValue: Response to send to client (success or error)
 func (s *Server) handleCommand(conn *Connection, cmd *Command) RedisValue {
+	defer func() {
+		if r := recover(); r != nil {
+			s.ErrorLog.Printf("PANIC in command handler '%s': %v", cmd.Name, r)
+		}
+	}()
+
 	if cmd == nil || cmd.Name == "" {
 		return RedisValue{
 			Type: ErrorReply,
@@ -503,7 +507,7 @@ server performance.
 // Automatically transitions unused connections from Active to Idle state.
 func (s *Server) startIdleChecker() {
 	go func() {
-		ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
+		ticker := time.NewTicker(30 * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -529,21 +533,26 @@ func (s *Server) checkIdleConnections() {
 	idleThreshold := now.Add(-s.IdleTimeout)
 
 	s.mu.RLock()
-	var idleConns []*Connection
+	connsToCheck := make([]*Connection, 0, len(s.activeConns))
 	for conn := range s.activeConns {
+		connsToCheck = append(connsToCheck, conn)
+	}
+	s.mu.RUnlock()
+
+	// Check each connection for idle timeout
+	var idleConns []*Connection
+	for _, conn := range connsToCheck {
 		conn.mu.RLock()
 		lastUsed := conn.lastUsed
-		currentState := ConnState(conn.state.Load())
 		conn.mu.RUnlock()
 
-		// If connection is active but hasn't been used recently, mark as idle
+		currentState := ConnState(conn.state.Load())
+
 		if currentState == StateActive && lastUsed.Before(idleThreshold) {
 			idleConns = append(idleConns, conn)
 		}
 	}
-	s.mu.RUnlock()
 
-	// Set connections to idle state
 	for _, conn := range idleConns {
 		conn.setState(StateIdle)
 		s.ErrorLog.Printf("Connection %s marked as idle", conn.RemoteAddr())
