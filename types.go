@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+type Middleware interface {
+	Handle(conn *Connection, cmd *Command) RedisValue
+}
+
+type MiddlewareChain struct {
+}
+
 // ConnState represents the state of a client connection
 type ConnState int
 
@@ -50,7 +57,7 @@ type Command struct {
 
 // CommandHandler defines the interface for handling Redis commands
 type CommandHandler interface {
-	Handle(conn *Connection, cmd *Command) RedisValue
+	Middleware
 }
 
 // CommandHandlerFunc enables using functions as CommandHandler implementations
