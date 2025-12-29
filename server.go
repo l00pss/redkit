@@ -24,6 +24,10 @@ func NewServerWithConfig(config *ServerConfig) *Server {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	if config.Logger == nil {
+		config.Logger = NewDefaultLogger(nil, LogLevelInfo)
+	}
+
 	server := &Server{
 		Address:         config.Address,
 		TLSConfig:       config.TLSConfig,
@@ -31,7 +35,7 @@ func NewServerWithConfig(config *ServerConfig) *Server {
 		WriteTimeout:    config.WriteTimeout,
 		IdleTimeout:     config.IdleTimeout,
 		MaxConnections:  config.MaxConnections,
-		ErrorLog:        config.ErrorLog,
+		Logger:          config.Logger,
 		ConnStateHook:   config.ConnStateHook,
 		handlers:        make(map[string]CommandHandler),
 		middlewareChain: NewMiddlewareChain(),
@@ -90,7 +94,7 @@ func (s *Server) Listen() error {
 		return fmt.Errorf("failed to listen on %s: %w", s.Address, err)
 	}
 
-	s.ErrorLog.Printf("RedKit server listening on %s", s.Address)
+	s.Logger.Info("Server listening on %s", s.Address)
 	return nil
 }
 
@@ -110,7 +114,7 @@ func (s *Server) Serve() error {
 			if s.inShutdown.Load() {
 				return nil
 			}
-			s.ErrorLog.Printf("Accept error: %v", err)
+			s.Logger.Error("Accept error: %v", err)
 			continue
 		}
 
@@ -122,7 +126,7 @@ func (s *Server) Serve() error {
 			if s.MaxConnections > 0 && s.connCount.Add(1) > int64(s.MaxConnections) {
 				s.connCount.Add(-1)
 				netConn.Close()
-				s.ErrorLog.Printf("Connection limit reached, rejecting connection from %s", netConn.RemoteAddr())
+				s.Logger.Warn("Connection limit reached, rejecting connection from %s", netConn.RemoteAddr())
 				return
 			}
 
@@ -215,6 +219,8 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 		s.ConnStateHook(netConn, StateActive)
 	}
 
+	s.Logger.Debug("New connection from %s", netConn.RemoteAddr())
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -224,15 +230,18 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 
 		if s.ReadTimeout > 0 {
 			if err := netConn.SetReadDeadline(time.Now().Add(s.ReadTimeout)); err != nil {
-				s.ErrorLog.Printf("Failed to set read deadline: %v", err)
+				s.Logger.Error("Failed to set read deadline: %v", err)
 				return
 			}
 		}
 
 		cmd, err := conn.readCommand()
 		if err != nil {
-			if err != io.EOF {
-				s.ErrorLog.Printf("Error reading command from %s: %v", netConn.RemoteAddr(), err)
+			errStr := err.Error()
+			if err == io.EOF || strings.Contains(errStr, "use of closed network connection") {
+				s.Logger.Debug("Connection closed by %s", netConn.RemoteAddr())
+			} else {
+				s.Logger.Error("Error reading command from %s: %v", netConn.RemoteAddr(), err)
 			}
 			return
 		}
@@ -240,6 +249,8 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 		conn.mu.Lock()
 		conn.lastUsed = time.Now()
 		conn.mu.Unlock()
+
+		s.Logger.Debug("Command from %s: %s %v", netConn.RemoteAddr(), cmd.Name, cmd.Args)
 
 		s.setConnectionActive(conn)
 
@@ -253,12 +264,20 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 		}
 
 		if err := conn.writeValue(response); err != nil {
-			s.ErrorLog.Printf("Error writing response to %s: %v", netConn.RemoteAddr(), err)
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				s.Logger.Debug("Connection closed while writing to %s", netConn.RemoteAddr())
+			} else {
+				s.Logger.Error("Error writing response to %s: %v", netConn.RemoteAddr(), err)
+			}
 			return
 		}
 
 		if err := conn.writer.Flush(); err != nil {
-			s.ErrorLog.Printf("Error flushing response to %s: %v", netConn.RemoteAddr(), err)
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				s.Logger.Debug("Connection closed while flushing to %s", netConn.RemoteAddr())
+			} else {
+				s.Logger.Error("Error flushing response to %s: %v", netConn.RemoteAddr(), err)
+			}
 			return
 		}
 	}
@@ -268,7 +287,7 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 func (s *Server) handleCommand(conn *Connection, cmd *Command) RedisValue {
 	defer func() {
 		if r := recover(); r != nil {
-			s.ErrorLog.Printf("PANIC in command handler '%s': %v", cmd.Name, r)
+			s.Logger.Error("PANIC in command handler '%s': %v", cmd.Name, r)
 		}
 	}()
 
@@ -365,7 +384,7 @@ func (s *Server) checkIdleConnections() {
 
 	for _, conn := range idleConns {
 		conn.setState(StateIdle)
-		s.ErrorLog.Printf("Connection %s marked as idle", conn.RemoteAddr())
+		s.Logger.Debug("Connection %s marked as idle", conn.RemoteAddr())
 	}
 }
 

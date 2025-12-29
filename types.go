@@ -10,6 +10,59 @@ import (
 	"time"
 )
 
+type LogLevel int
+
+const (
+	LogLevelDebug LogLevel = iota
+	LogLevelInfo
+	LogLevelWarn
+	LogLevelError
+	LogLevelOff
+)
+
+type Logger interface {
+	Debug(format string, v ...interface{})
+	Info(format string, v ...interface{})
+	Warn(format string, v ...interface{})
+	Error(format string, v ...interface{})
+}
+
+type defaultLogger struct {
+	logger *log.Logger
+	level  LogLevel
+}
+
+func NewDefaultLogger(logger *log.Logger, level LogLevel) Logger {
+	if logger == nil {
+		logger = log.New(log.Writer(), "[RedKit] ", log.LstdFlags)
+	}
+	return &defaultLogger{logger: logger, level: level}
+}
+
+func (l *defaultLogger) Debug(format string, v ...interface{}) {
+	if l.level <= LogLevelDebug {
+		l.logger.Printf("[DEBUG] "+format, v...)
+	}
+}
+
+func (l *defaultLogger) Info(format string, v ...interface{}) {
+	if l.level <= LogLevelInfo {
+		l.logger.Printf("[INFO] "+format, v...)
+	}
+}
+
+func (l *defaultLogger) Warn(format string, v ...interface{}) {
+	if l.level <= LogLevelWarn {
+		l.logger.Printf("[WARN] "+format, v...)
+	}
+}
+
+func (l *defaultLogger) Error(format string, v ...interface{}) {
+	if l.level <= LogLevelError {
+		l.logger.Printf("[ERROR] "+format, v...)
+	}
+}
+
 type CommandHandler interface {
 	Handle(conn *Connection, cmd *Command) RedisValue
 }
@@ -120,7 +173,7 @@ type ServerConfig struct {
 	WriteTimeout   time.Duration
 	IdleTimeout    time.Duration
 	MaxConnections int
-	ErrorLog       *log.Logger
+	Logger         Logger
 	ConnStateHook  func(net.Conn, ConnState)
 }
 
@@ -131,7 +184,7 @@ func DefaultServerConfig() *ServerConfig {
 		WriteTimeout:   30 * time.Second,
 		IdleTimeout:    120 * time.Second,
 		MaxConnections: 1000,
-		ErrorLog:       log.New(log.Writer(), "[RedKit] ", log.LstdFlags),
+		Logger:         NewDefaultLogger(nil, LogLevelInfo),
 	}
 }
 
@@ -142,7 +195,7 @@ type Server struct {
 	WriteTimeout   time.Duration
 	IdleTimeout    time.Duration
 	MaxConnections int
-	ErrorLog       *log.Logger
+	Logger         Logger
 	ConnStateHook  func(net.Conn, ConnState)
 
 	handlers        map[string]CommandHandler

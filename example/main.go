@@ -14,8 +14,22 @@ import (
 )
 
 func main() {
-	// Create a new RedKit server
-	server := redkit.NewServer(":6379")
+	// Create server config
+	config := redkit.DefaultServerConfig()
+	config.Address = ":6379"
+	config.ReadTimeout = 30 * time.Second
+	config.WriteTimeout = 30 * time.Second
+	config.IdleTimeout = 120 * time.Second
+	config.MaxConnections = 1000
+
+	// Set log level to Debug to see all logs
+	config.Logger = redkit.NewDefaultLogger(
+		log.New(os.Stdout, "[RedKit] ", log.LstdFlags|log.Lshortfile),
+		redkit.LogLevelDebug,
+	)
+
+	// Create server with config
+	server := redkit.NewServerWithConfig(config)
 
 	// Add logging middleware - logs all commands
 	server.UseFunc(func(conn *redkit.Connection, cmd *redkit.Command, next redkit.CommandHandler) redkit.RedisValue {
