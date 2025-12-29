@@ -6,23 +6,33 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"time"
 )
 
-// NewServer creates a new Redis-compatible server instance
 func NewServer(address string) *Server {
+	config := DefaultServerConfig()
+	config.Address = address
+	return NewServerWithConfig(config)
+}
+
+func NewServerWithConfig(config *ServerConfig) *Server {
+	if config == nil {
+		config = DefaultServerConfig()
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	server := &Server{
-		Address:         address,
-		ReadTimeout:     30 * time.Second,
-		WriteTimeout:    30 * time.Second,
-		IdleTimeout:     120 * time.Second,
-		MaxConnections:  1000,
-		ErrorLog:        log.New(log.Writer(), "[RedKit] ", log.LstdFlags),
+		Address:         config.Address,
+		TLSConfig:       config.TLSConfig,
+		ReadTimeout:     config.ReadTimeout,
+		WriteTimeout:    config.WriteTimeout,
+		IdleTimeout:     config.IdleTimeout,
+		MaxConnections:  config.MaxConnections,
+		ErrorLog:        config.ErrorLog,
+		ConnStateHook:   config.ConnStateHook,
 		handlers:        make(map[string]CommandHandler),
 		middlewareChain: NewMiddlewareChain(),
 		activeConns:     make(map[*Connection]struct{}),
@@ -30,10 +40,7 @@ func NewServer(address string) *Server {
 		cancel:          cancel,
 	}
 
-	// Register default handlers
 	server.registerDefaultHandlers()
-
-	// Start idle connection checker
 	server.startIdleChecker()
 
 	return server

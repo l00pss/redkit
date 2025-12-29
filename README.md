@@ -96,16 +96,22 @@ OK
 ##  Configuration
 
 ```go
+// Simple usage
 server := redkit.NewServer(":6379")
-server.ReadTimeout = 30 * time.Second
-server.WriteTimeout = 30 * time.Second
-server.IdleTimeout = 120 * time.Second
-server.MaxConnections = 1000
 
-// Connection state tracking
-server.ConnStateHook = func(conn net.Conn, state ConnState) {
+// Advanced configuration
+config := redkit.DefaultServerConfig()
+config.Address = ":6379"
+config.ReadTimeout = 30 * time.Second
+config.WriteTimeout = 30 * time.Second
+config.IdleTimeout = 120 * time.Second
+config.MaxConnections = 1000
+config.TLSConfig = &tls.Config{...}
+config.ConnStateHook = func(conn net.Conn, state redkit.ConnState) {
     log.Printf("Connection %s: %v", conn.RemoteAddr(), state)
 }
+
+server := redkit.NewServerWithConfig(config)
 ```
 
 ##  Development

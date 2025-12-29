@@ -113,6 +113,28 @@ type Command struct {
 	Raw  []RedisValue
 }
 
+type ServerConfig struct {
+	Address        string
+	TLSConfig      *tls.Config
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	IdleTimeout    time.Duration
+	MaxConnections int
+	ErrorLog       *log.Logger
+	ConnStateHook  func(net.Conn, ConnState)
+}
+
+func DefaultServerConfig() *ServerConfig {
+	return &ServerConfig{
+		Address:        ":6379",
+		ReadTimeout:    30 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		IdleTimeout:    120 * time.Second,
+		MaxConnections: 1000,
+		ErrorLog:       log.New(log.Writer(), "[RedKit] ", log.LstdFlags),
+	}
+}
+
 type Server struct {
 	Address        string
 	TLSConfig      *tls.Config
