@@ -17,16 +17,17 @@ func NewServer(address string) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	server := &Server{
-		Address:        address,
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   30 * time.Second,
-		IdleTimeout:    120 * time.Second,
-		MaxConnections: 1000,
-		ErrorLog:       log.New(log.Writer(), "[RedKit] ", log.LstdFlags),
-		handlers:       make(map[string]CommandHandler),
-		activeConns:    make(map[*Connection]struct{}),
-		ctx:            ctx,
-		cancel:         cancel,
+		Address:         address,
+		ReadTimeout:     30 * time.Second,
+		WriteTimeout:    30 * time.Second,
+		IdleTimeout:     120 * time.Second,
+		MaxConnections:  1000,
+		ErrorLog:        log.New(log.Writer(), "[RedKit] ", log.LstdFlags),
+		handlers:        make(map[string]CommandHandler),
+		middlewareChain: NewMiddlewareChain(),
+		activeConns:     make(map[*Connection]struct{}),
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 
 	// Register default handlers
@@ -55,6 +56,18 @@ func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Com
 		return fmt.Errorf("empty command name")
 	}
 	return s.RegisterCommand(name, CommandHandlerFunc(handler))
+}
+
+// Use adds a middleware to the server's middleware chain
+func (s *Server) Use(middleware Middleware) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.middlewareChain.Add(middleware)
+}
+
+// UseFunc adds a middleware function to the server's middleware chain
+func (s *Server) UseFunc(fn func(*Connection, *Command, CommandHandler) RedisValue) {
+	s.Use(MiddlewareFunc(fn))
 }
 
 // Listen starts listening on the configured address
@@ -270,7 +283,8 @@ func (s *Server) handleCommand(conn *Connection, cmd *Command) RedisValue {
 		}
 	}
 
-	return handler.Handle(conn, cmd)
+	// Execute through middleware chain
+	return s.middlewareChain.Execute(conn, cmd, handler)
 }
 
 // OnShutdown registers a function to call on shutdown

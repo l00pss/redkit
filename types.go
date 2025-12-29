@@ -10,14 +10,75 @@ import (
 	"time"
 )
 
-type Middleware interface {
+type CommandHandler interface {
 	Handle(conn *Connection, cmd *Command) RedisValue
 }
 
-type MiddlewareChain struct {
+type CommandHandlerFunc func(conn *Connection, cmd *Command) RedisValue
+
+func (f CommandHandlerFunc) Handle(conn *Connection, cmd *Command) RedisValue {
+	return f(conn, cmd)
 }
 
-// ConnState represents the state of a client connection
+type Middleware interface {
+	Handle(conn *Connection, cmd *Command, next CommandHandler) RedisValue
+}
+
+type MiddlewareFunc func(conn *Connection, cmd *Command, next CommandHandler) RedisValue
+
+func (f MiddlewareFunc) Handle(conn *Connection, cmd *Command, next CommandHandler) RedisValue {
+	return f(conn, cmd, next)
+}
+
+type MiddlewareChain struct {
+	middlewares []Middleware
+}
+
+func NewMiddlewareChain() *MiddlewareChain {
+	return &MiddlewareChain{
+		middlewares: make([]Middleware, 0),
+	}
+}
+
+func (mc *MiddlewareChain) Add(middleware Middleware) *MiddlewareChain {
+	mc.middlewares = append(mc.middlewares, middleware)
+	return mc
+}
+
+func (mc *MiddlewareChain) Execute(conn *Connection, cmd *Command, handler CommandHandler) RedisValue {
+	if len(mc.middlewares) == 0 {
+		return handler.Handle(conn, cmd)
+	}
+
+	final := handler
+
+	for i := len(mc.middlewares) - 1; i >= 0; i-- {
+		mw := mc.middlewares[i]
+		next := final
+		final = &wrappedHandler{
+			middleware: mw,
+			next:       next,
+		}
+	}
+
+	return final.Handle(conn, cmd)
+}
+
+type wrappedHandler struct {
+	middleware Middleware
+	next       CommandHandler
+}
+
+func (wh *wrappedHandler) Handle(conn *Connection, cmd *Command) RedisValue {
+	return wh.middleware.Handle(conn, cmd, wh.next)
+}
+
+func (mc *MiddlewareChain) Handler(handler CommandHandler) CommandHandler {
+	return CommandHandlerFunc(func(conn *Connection, cmd *Command) RedisValue {
+		return mc.Execute(conn, cmd, handler)
+	})
+}
+
 type ConnState int
 
 const (
@@ -27,7 +88,6 @@ const (
 	StateClosed
 )
 
-// RedisValue represents different types of Redis values
 type RedisValue struct {
 	Type  RedisType
 	Str   string
@@ -36,7 +96,6 @@ type RedisValue struct {
 	Array []RedisValue
 }
 
-// RedisType represents Redis protocol data types
 type RedisType int
 
 const (
@@ -48,27 +107,12 @@ const (
 	Null
 )
 
-// Command represents a Redis command with arguments
 type Command struct {
 	Name string
 	Args []string
 	Raw  []RedisValue
 }
 
-// CommandHandler defines the interface for handling Redis commands
-type CommandHandler interface {
-	Middleware
-}
-
-// CommandHandlerFunc enables using functions as CommandHandler implementations
-type CommandHandlerFunc func(conn *Connection, cmd *Command) RedisValue
-
-// Handle implements CommandHandler interface for function types
-func (f CommandHandlerFunc) Handle(conn *Connection, cmd *Command) RedisValue {
-	return f(conn, cmd)
-}
-
-// Server represents the Redis-compatible server
 type Server struct {
 	Address        string
 	TLSConfig      *tls.Config
@@ -79,14 +123,15 @@ type Server struct {
 	ErrorLog       *log.Logger
 	ConnStateHook  func(net.Conn, ConnState)
 
-	handlers    map[string]CommandHandler
-	listener    net.Listener
-	activeConns map[*Connection]struct{}
-	connCount   atomic.Int64
-	inShutdown  atomic.Bool
-	mu          sync.RWMutex
-	onShutdown  []func()
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
+	handlers        map[string]CommandHandler
+	middlewareChain *MiddlewareChain
+	listener        net.Listener
+	activeConns     map[*Connection]struct{}
+	connCount       atomic.Int64
+	inShutdown      atomic.Bool
+	mu              sync.RWMutex
+	onShutdown      []func()
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
 }
