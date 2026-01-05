@@ -119,19 +119,24 @@ func (s *Server) Serve() error {
 		}
 
 		s.wg.Add(1)
+
+		if s.MaxConnections > 0 {
+			if s.connCount.Add(1) > int64(s.MaxConnections) {
+				s.connCount.Add(-1)
+				s.wg.Done()
+				conn.Close()
+				s.Logger.Warn("Connection limit reached, rejecting connection from %s", conn.RemoteAddr())
+				continue
+			}
+		} else {
+			s.connCount.Add(1)
+		}
+
 		go func(netConn net.Conn) {
 			defer s.wg.Done()
-
-			// Check connection limit after Accept to prevent TOCTOU race
-			if s.MaxConnections > 0 && s.connCount.Add(1) > int64(s.MaxConnections) {
-				s.connCount.Add(-1)
-				netConn.Close()
-				s.Logger.Warn("Connection limit reached, rejecting connection from %s", netConn.RemoteAddr())
-				return
-			}
+			defer s.connCount.Add(-1)
 
 			s.handleConnectionInternal(netConn)
-			s.connCount.Add(-1)
 		}(conn)
 	}
 }
@@ -151,13 +156,18 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 	// Close all active connections
 	s.mu.RLock()
+	conns := make([]*Connection, 0, len(s.activeConns))
 	for conn := range s.activeConns {
+		conns = append(conns, conn)
+	}
+	s.mu.RUnlock()
+
+	for _, conn := range conns {
 		err := conn.Close()
 		if err != nil {
 			return err
 		}
 	}
-	s.mu.RUnlock()
 
 	// Run shutdown hooks
 	s.mu.Lock()
@@ -252,9 +262,9 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 
 		s.Logger.Debug("Command from %s: %s %v", netConn.RemoteAddr(), cmd.Name, cmd.Args)
 
-		s.setConnectionActive(conn)
-
+		conn.setState(StateProcessing)
 		response := s.handleCommand(conn, cmd)
+		conn.setState(StateActive)
 
 		if s.WriteTimeout > 0 {
 			err := netConn.SetWriteDeadline(time.Now().Add(s.WriteTimeout))
@@ -377,14 +387,14 @@ func (s *Server) checkIdleConnections() {
 
 		currentState := ConnState(conn.state.Load())
 
-		if currentState == StateActive && lastUsed.Before(idleThreshold) {
+		if (currentState == StateActive || currentState == StateIdle) && lastUsed.Before(idleThreshold) {
 			idleConns = append(idleConns, conn)
 		}
 	}
 
 	for _, conn := range idleConns {
-		conn.setState(StateIdle)
-		s.Logger.Debug("Connection %s marked as idle", conn.RemoteAddr())
+		s.Logger.Info("Closing idle connection %s", conn.RemoteAddr())
+		conn.Close()
 	}
 }
 

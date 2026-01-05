@@ -118,10 +118,22 @@ func (c *Connection) readBulkString(sizeBytes []byte) (RedisValue, error) {
 	}
 
 	// Read the bulk data plus CRLF
-	data := make([]byte, size+2)
-	_, err = io.ReadFull(c.reader, data)
-	if err != nil {
-		return RedisValue{}, err
+	var data []byte
+	if size > 1024*1024 {
+		r := io.LimitReader(c.reader, int64(size+2))
+		data, err = io.ReadAll(r)
+		if err != nil {
+			return RedisValue{}, err
+		}
+		if len(data) != size+2 {
+			return RedisValue{}, fmt.Errorf("unexpected EOF reading bulk string")
+		}
+	} else {
+		data = make([]byte, size+2)
+		_, err = io.ReadFull(c.reader, data)
+		if err != nil {
+			return RedisValue{}, err
+		}
 	}
 
 	return RedisValue{Type: BulkString, Bulk: data[:size]}, nil

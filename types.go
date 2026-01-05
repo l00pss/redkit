@@ -139,6 +139,7 @@ const (
 	StateActive
 	StateIdle
 	StateClosed
+	StateProcessing
 )
 
 type RedisValue struct {
