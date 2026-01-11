@@ -87,15 +87,6 @@ OK
 "value"
 ```
 
-##  Built-in Commands
-
-- `PING`, `ECHO`, `QUIT` - Connection commands
-- `SET`, `GET`, `MSET`, `MGET`, `SETNX` - String operations
-- `DEL`, `EXISTS`, `TYPE`, `KEYS` - Key management
-- `INCR`, `DECR`, `INCRBY`, `DECRBY` - Numeric operations
-- `EXPIRE`, `TTL` - Expiration management
-- `FLUSHDB`, `FLUSHALL` - Database operations
-
 ##  Configuration
 
 ```go
