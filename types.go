@@ -168,14 +168,15 @@ type Command struct {
 }
 
 type ServerConfig struct {
-	Address        string
-	TLSConfig      *tls.Config
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration
-	IdleTimeout    time.Duration
-	MaxConnections int
-	Logger         Logger
-	ConnStateHook  func(net.Conn, ConnState)
+	Address            string
+	TLSConfig          *tls.Config
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	IdleTimeout        time.Duration
+	IdleCheckFrequency time.Duration
+	MaxConnections     int
+	Logger             Logger
+	ConnStateHook      func(net.Conn, ConnState)
 }
 
 func DefaultServerConfig() *ServerConfig {
@@ -190,14 +191,15 @@ func DefaultServerConfig() *ServerConfig {
 }
 
 type Server struct {
-	Address        string
-	TLSConfig      *tls.Config
-	ReadTimeout    time.Duration
-	WriteTimeout   time.Duration
-	IdleTimeout    time.Duration
-	MaxConnections int
-	Logger         Logger
-	ConnStateHook  func(net.Conn, ConnState)
+	Address            string
+	TLSConfig          *tls.Config
+	ReadTimeout        time.Duration
+	WriteTimeout       time.Duration
+	IdleTimeout        time.Duration
+	IdleCheckFrequency time.Duration
+	MaxConnections     int
+	Logger             Logger
+	ConnStateHook      func(net.Conn, ConnState)
 
 	handlers        map[string]CommandHandler
 	middlewareChain *MiddlewareChain

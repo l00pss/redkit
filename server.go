@@ -29,19 +29,20 @@ func NewServerWithConfig(config *ServerConfig) *Server {
 	}
 
 	server := &Server{
-		Address:         config.Address,
-		TLSConfig:       config.TLSConfig,
-		ReadTimeout:     config.ReadTimeout,
-		WriteTimeout:    config.WriteTimeout,
-		IdleTimeout:     config.IdleTimeout,
-		MaxConnections:  config.MaxConnections,
-		Logger:          config.Logger,
-		ConnStateHook:   config.ConnStateHook,
-		handlers:        make(map[string]CommandHandler),
-		middlewareChain: NewMiddlewareChain(),
-		activeConns:     make(map[*Connection]struct{}),
-		ctx:             ctx,
-		cancel:          cancel,
+		Address:            config.Address,
+		TLSConfig:          config.TLSConfig,
+		ReadTimeout:        config.ReadTimeout,
+		WriteTimeout:       config.WriteTimeout,
+		IdleTimeout:        config.IdleTimeout,
+		IdleCheckFrequency: config.IdleCheckFrequency,
+		MaxConnections:     config.MaxConnections,
+		Logger:             config.Logger,
+		ConnStateHook:      config.ConnStateHook,
+		handlers:           make(map[string]CommandHandler),
+		middlewareChain:    NewMiddlewareChain(),
+		activeConns:        make(map[*Connection]struct{}),
+		ctx:                ctx,
+		cancel:             cancel,
 	}
 
 	server.registerDefaultHandlers()
@@ -170,10 +171,11 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.mu.RUnlock()
 
+	var firstErr error
 	for _, conn := range conns {
-		err := conn.Close()
-		if err != nil {
-			return err
+		if err := conn.Close(); err != nil && firstErr == nil {
+			firstErr = err
+			s.Logger.Warn("Error closing connection during shutdown: %v", err)
 		}
 	}
 
@@ -195,7 +197,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-done:
-		return nil
+		return firstErr
 	}
 }
 
@@ -215,7 +217,7 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 		lastUsed: time.Now(),
 	}
 
-	conn.state.Store(int32(StateNew))
+	conn.setState(StateNew)
 
 	s.mu.Lock()
 	s.activeConns[conn] = struct{}{}
@@ -228,14 +230,7 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 		s.mu.Unlock()
 	}()
 
-	if s.ConnStateHook != nil {
-		s.ConnStateHook(netConn, StateNew)
-	}
-
 	conn.setState(StateActive)
-	if s.ConnStateHook != nil {
-		s.ConnStateHook(netConn, StateActive)
-	}
 
 	s.Logger.Debug("New connection from %s", netConn.RemoteAddr())
 
@@ -356,7 +351,11 @@ func (s *Server) TriggerIdleCheck() {
 // startIdleChecker starts a background goroutine to check for idle connections
 func (s *Server) startIdleChecker() {
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		checkInterval := s.IdleCheckFrequency
+		if checkInterval <= 0 {
+			checkInterval = 30 * time.Second
+		}
+		ticker := time.NewTicker(checkInterval)
 		defer ticker.Stop()
 
 		for {
