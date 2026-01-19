@@ -119,13 +119,16 @@ func (s *Server) Serve() error {
 			continue
 		}
 
+		shouldHandle := true
+
 		if s.MaxConnections > 0 {
 			for {
 				current := s.connCount.Load()
 				if current >= int64(s.MaxConnections) {
 					conn.Close()
 					s.Logger.Warn("Connection limit reached, rejecting connection from %s", conn.RemoteAddr())
-					goto nextConn
+					shouldHandle = false
+					break
 				}
 				if s.connCount.CompareAndSwap(current, current+1) {
 					break
@@ -135,18 +138,16 @@ func (s *Server) Serve() error {
 			s.connCount.Add(1)
 		}
 
-		s.wg.Add(1)
+		if shouldHandle {
+			s.wg.Add(1)
 
-		go func(netConn net.Conn) {
-			defer s.wg.Done()
-			defer s.connCount.Add(-1)
+			go func(netConn net.Conn) {
+				defer s.wg.Done()
+				defer s.connCount.Add(-1)
 
-			s.handleConnectionInternal(netConn)
-		}(conn)
-		continue
-
-	nextConn:
-		continue
+				s.handleConnectionInternal(netConn)
+			}(conn)
+		}
 	}
 }
 
