@@ -53,8 +53,11 @@ func NewServerWithConfig(config *ServerConfig) *Server {
 
 // RegisterCommand registers a command handler
 func (s *Server) RegisterCommand(name string, handler CommandHandler) error {
-	if name == "" || handler == nil {
+	if name == "" {
 		return fmt.Errorf("empty command name")
+	}
+	if handler == nil {
+		return fmt.Errorf("nil handler for command '%s'", name)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -64,8 +67,11 @@ func (s *Server) RegisterCommand(name string, handler CommandHandler) error {
 
 // RegisterCommandFunc registers a function as a command handler
 func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Command) RedisValue) error {
-	if name == "" || handler == nil {
+	if name == "" {
 		return fmt.Errorf("empty command name")
+	}
+	if handler == nil {
+		return fmt.Errorf("nil handler function for command '%s'", name)
 	}
 	return s.RegisterCommand(name, CommandHandlerFunc(handler))
 }
@@ -298,10 +304,14 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 }
 
 // handleCommand processes a Redis command
-func (s *Server) handleCommand(conn *Connection, cmd *Command) RedisValue {
+func (s *Server) handleCommand(conn *Connection, cmd *Command) (result RedisValue) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.Logger.Error("PANIC in command handler '%s': %v", cmd.Name, r)
+			result = RedisValue{
+				Type: ErrorReply,
+				Str:  fmt.Sprintf("ERR internal error: panic in handler '%s'", cmd.Name),
+			}
 		}
 	}()
 

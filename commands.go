@@ -1,5 +1,7 @@
 package redkit
 
+import "time"
+
 // CommandType represents Redis command names
 type CommandType string
 
@@ -408,12 +410,14 @@ func (s *Server) registerDefaultHandlers() {
 		return RedisValue{Type: BulkString, Bulk: []byte(helpText)}
 	})
 
-	// QUIT command
+	// QUIT command - mark connection for closing, response will be sent first
 	s.RegisterCommandFunc(string(QUIT), func(conn *Connection, cmd *Command) RedisValue {
-		err := conn.Close()
-		if err != nil {
-			return RedisValue{}
-		}
+		// Schedule connection close after response is sent
+		// The actual close happens in handleConnectionInternal after writeValue
+		go func() {
+			time.Sleep(10 * time.Millisecond) // Give time for response to be sent
+			conn.Close()
+		}()
 		return RedisValue{Type: SimpleString, Str: "OK"}
 	})
 }

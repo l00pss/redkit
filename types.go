@@ -85,6 +85,7 @@ func (f MiddlewareFunc) Handle(conn *Connection, cmd *Command, next CommandHandl
 
 type MiddlewareChain struct {
 	middlewares []Middleware
+	mu          sync.RWMutex
 }
 
 func NewMiddlewareChain() *MiddlewareChain {
@@ -94,19 +95,26 @@ func NewMiddlewareChain() *MiddlewareChain {
 }
 
 func (mc *MiddlewareChain) Add(middleware Middleware) *MiddlewareChain {
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
 	mc.middlewares = append(mc.middlewares, middleware)
 	return mc
 }
 
 func (mc *MiddlewareChain) Execute(conn *Connection, cmd *Command, handler CommandHandler) RedisValue {
-	if len(mc.middlewares) == 0 {
+	mc.mu.RLock()
+	middlewares := make([]Middleware, len(mc.middlewares))
+	copy(middlewares, mc.middlewares)
+	mc.mu.RUnlock()
+
+	if len(middlewares) == 0 {
 		return handler.Handle(conn, cmd)
 	}
 
 	final := handler
 
-	for i := len(mc.middlewares) - 1; i >= 0; i-- {
-		mw := mc.middlewares[i]
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		mw := middlewares[i]
 		next := final
 		final = &wrappedHandler{
 			middleware: mw,
@@ -181,12 +189,13 @@ type ServerConfig struct {
 
 func DefaultServerConfig() *ServerConfig {
 	return &ServerConfig{
-		Address:        ":6379",
-		ReadTimeout:    30 * time.Second,
-		WriteTimeout:   30 * time.Second,
-		IdleTimeout:    120 * time.Second,
-		MaxConnections: 1000,
-		Logger:         NewDefaultLogger(nil, LogLevelInfo),
+		Address:            ":6379",
+		ReadTimeout:        30 * time.Second,
+		WriteTimeout:       30 * time.Second,
+		IdleTimeout:        120 * time.Second,
+		IdleCheckFrequency: 30 * time.Second,
+		MaxConnections:     1000,
+		Logger:             NewDefaultLogger(nil, LogLevelInfo),
 	}
 }
 
