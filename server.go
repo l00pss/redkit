@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,9 +39,9 @@ func NewServerWithConfig(config *ServerConfig) *Server {
 		MaxConnections:     config.MaxConnections,
 		Logger:             config.Logger,
 		ConnStateHook:      config.ConnStateHook,
-		handlers:           make(map[string]CommandHandler),
+		handlers:           &sync.Map{},
 		middlewareChain:    NewMiddlewareChain(),
-		activeConns:        make(map[*Connection]struct{}),
+		activeConns:        &sync.Map{},
 		ctx:                ctx,
 		cancel:             cancel,
 	}
@@ -59,9 +60,7 @@ func (s *Server) RegisterCommand(name string, handler CommandHandler) error {
 	if handler == nil {
 		return fmt.Errorf("nil handler for command '%s'", name)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.handlers[strings.ToUpper(name)] = handler
+	s.handlers.Store(strings.ToUpper(name), handler)
 	return nil
 }
 
@@ -78,8 +77,6 @@ func (s *Server) RegisterCommandFunc(name string, handler func(*Connection, *Com
 
 // Use adds a middleware to the server's middleware chain
 func (s *Server) Use(middleware Middleware) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.middlewareChain.Add(middleware)
 }
 
@@ -116,6 +113,11 @@ func (s *Server) Serve() error {
 	defer s.listener.Close()
 
 	for {
+		// Check shutdown before accepting
+		if s.inShutdown.Load() {
+			return nil
+		}
+
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if s.inShutdown.Load() {
@@ -148,8 +150,10 @@ func (s *Server) Serve() error {
 			s.wg.Add(1)
 
 			go func(netConn net.Conn) {
-				defer s.wg.Done()
-				defer s.connCount.Add(-1)
+				defer func() {
+					s.wg.Done()
+					s.connCount.Add(-1)
+				}()
 
 				s.handleConnectionInternal(netConn)
 			}(conn)
@@ -171,12 +175,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 
 	// Close all active connections
-	s.mu.RLock()
-	conns := make([]*Connection, 0, len(s.activeConns))
-	for conn := range s.activeConns {
-		conns = append(conns, conn)
-	}
-	s.mu.RUnlock()
+	var conns []*Connection
+	s.activeConns.Range(func(key, value interface{}) bool {
+		if conn, ok := key.(*Connection); ok {
+			conns = append(conns, conn)
+		}
+		return true
+	})
 
 	var firstErr error
 	for _, conn := range conns {
@@ -210,31 +215,32 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // handleConnectionInternal handles a single client connection
 func (s *Server) handleConnectionInternal(netConn net.Conn) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.Logger.Error("PANIC in connection handler: %v", r)
+		}
+	}()
 
 	ctx, cancel := context.WithCancel(s.ctx)
 	defer cancel()
 
 	conn := &Connection{
-		conn:     netConn,
-		reader:   bufio.NewReader(netConn),
-		writer:   bufio.NewWriter(netConn),
-		server:   s,
-		ctx:      ctx,
-		cancel:   cancel,
-		lastUsed: time.Now(),
+		conn:   netConn,
+		reader: bufio.NewReader(netConn),
+		writer: bufio.NewWriter(netConn),
+		server: s,
+		ctx:    ctx,
+		cancel: cancel,
 	}
+	conn.lastUsed.Store(time.Now().UnixNano())
 
 	conn.setState(StateNew)
 
-	s.mu.Lock()
-	s.activeConns[conn] = struct{}{}
-	s.mu.Unlock()
+	s.activeConns.Store(conn, struct{}{})
 
 	defer func() {
 		conn.Close()
-		s.mu.Lock()
-		delete(s.activeConns, conn)
-		s.mu.Unlock()
+		s.activeConns.Delete(conn)
 	}()
 
 	conn.setState(StateActive)
@@ -266,9 +272,7 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 			return
 		}
 
-		conn.mu.Lock()
-		conn.lastUsed = time.Now()
-		conn.mu.Unlock()
+		conn.UpdateLastUsed()
 
 		s.Logger.Debug("Command from %s: %s %v", netConn.RemoteAddr(), cmd.Name, cmd.Args)
 
@@ -300,6 +304,12 @@ func (s *Server) handleConnectionInternal(netConn net.Conn) {
 			}
 			return
 		}
+
+		// Check if connection should be closed after response (e.g., QUIT command)
+		if conn.ShouldClose() {
+			s.Logger.Debug("Closing connection as requested by %s", netConn.RemoteAddr())
+			return
+		}
 	}
 }
 
@@ -322,14 +332,19 @@ func (s *Server) handleCommand(conn *Connection, cmd *Command) (result RedisValu
 		}
 	}
 
-	s.mu.RLock()
-	handler, exists := s.handlers[strings.ToUpper(cmd.Name)]
-	s.mu.RUnlock()
-
+	handlerVal, exists := s.handlers.Load(strings.ToUpper(cmd.Name))
 	if !exists {
 		return RedisValue{
 			Type: ErrorReply,
 			Str:  fmt.Sprintf("ERR unknown command '%s'", cmd.Name),
+		}
+	}
+
+	handler, ok := handlerVal.(CommandHandler)
+	if !ok {
+		return RedisValue{
+			Type: ErrorReply,
+			Str:  fmt.Sprintf("ERR invalid handler for command '%s'", cmd.Name),
 		}
 	}
 
@@ -389,20 +404,18 @@ func (s *Server) checkIdleConnections() {
 	now := time.Now()
 	idleThreshold := now.Add(-s.IdleTimeout)
 
-	s.mu.RLock()
-	connsToCheck := make([]*Connection, 0, len(s.activeConns))
-	for conn := range s.activeConns {
-		connsToCheck = append(connsToCheck, conn)
-	}
-	s.mu.RUnlock()
+	var connsToCheck []*Connection
+	s.activeConns.Range(func(key, value interface{}) bool {
+		if conn, ok := key.(*Connection); ok {
+			connsToCheck = append(connsToCheck, conn)
+		}
+		return true
+	})
 
 	// Check each connection for idle timeout
 	var idleConns []*Connection
 	for _, conn := range connsToCheck {
-		conn.mu.RLock()
-		lastUsed := conn.lastUsed
-		conn.mu.RUnlock()
-
+		lastUsed := conn.GetLastUsed()
 		currentState := ConnState(conn.state.Load())
 
 		if (currentState == StateActive || currentState == StateIdle) && lastUsed.Before(idleThreshold) {
@@ -421,8 +434,5 @@ func (s *Server) setConnectionActive(conn *Connection) {
 	currentState := ConnState(conn.state.Load())
 	if currentState == StateIdle {
 		conn.setState(StateActive)
-		if s.ConnStateHook != nil {
-			s.ConnStateHook(conn.conn, StateActive)
-		}
 	}
 }

@@ -84,28 +84,31 @@ func (f MiddlewareFunc) Handle(conn *Connection, cmd *Command, next CommandHandl
 }
 
 type MiddlewareChain struct {
-	middlewares []Middleware
-	mu          sync.RWMutex
+	middlewares atomic.Value // []Middleware
+	mu          sync.Mutex
 }
 
 func NewMiddlewareChain() *MiddlewareChain {
-	return &MiddlewareChain{
-		middlewares: make([]Middleware, 0),
-	}
+	mc := &MiddlewareChain{}
+	mc.middlewares.Store([]Middleware{})
+	return mc
 }
 
 func (mc *MiddlewareChain) Add(middleware Middleware) *MiddlewareChain {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
-	mc.middlewares = append(mc.middlewares, middleware)
+	
+	current := mc.middlewares.Load().([]Middleware)
+	newMiddlewares := make([]Middleware, len(current)+1)
+	copy(newMiddlewares, current)
+	newMiddlewares[len(current)] = middleware
+	mc.middlewares.Store(newMiddlewares)
+	
 	return mc
 }
 
 func (mc *MiddlewareChain) Execute(conn *Connection, cmd *Command, handler CommandHandler) RedisValue {
-	mc.mu.RLock()
-	middlewares := make([]Middleware, len(mc.middlewares))
-	copy(middlewares, mc.middlewares)
-	mc.mu.RUnlock()
+	middlewares := mc.middlewares.Load().([]Middleware)
 
 	if len(middlewares) == 0 {
 		return handler.Handle(conn, cmd)
@@ -210,10 +213,10 @@ type Server struct {
 	Logger             Logger
 	ConnStateHook      func(net.Conn, ConnState)
 
-	handlers        map[string]CommandHandler
+	handlers        *sync.Map // map[string]CommandHandler
 	middlewareChain *MiddlewareChain
 	listener        net.Listener
-	activeConns     map[*Connection]struct{}
+	activeConns     *sync.Map // map[*Connection]struct{}
 	connCount       atomic.Int64
 	inShutdown      atomic.Bool
 	mu              sync.RWMutex

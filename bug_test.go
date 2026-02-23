@@ -238,7 +238,8 @@ func TestMiddlewareChainThreadSafety(t *testing.T) {
 
 	// Check if all middlewares were added
 	expectedCount := numGoroutines * numAdds
-	actualCount := len(chain.middlewares)
+	middlewares := chain.middlewares.Load().([]Middleware)
+	actualCount := len(middlewares)
 
 	if actualCount != expectedCount {
 		t.Errorf("BUG CONFIRMED: Expected %d middlewares, got %d (race condition detected)", expectedCount, actualCount)
